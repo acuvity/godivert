@@ -1,3 +1,5 @@
+//go:build windows
+
 package godivert
 
 import (
@@ -242,16 +244,16 @@ func TestPacketMarshalUnmarshalFuzz(t *testing.T) {
 			packetLen = uint32(len(rawData))
 		}
 
+		addr := NewWinDivertAddress()
+		addr.SetTimestamp(timestamp)
+		addr.SetIfIdx(ifIdx)
+		addr.SetSubIfIdx(subIfIdx)
+		addr.SetFlags(flags)
+
 		original := &Packet{
 			Raw:       rawData,
 			PacketLen: uint(packetLen),
-			Addr: &WinDivertAddress{
-				Timestamp: timestamp,
-				IfIdx:     ifIdx,
-
-				SubIfIdx: subIfIdx,
-				Flags:    flags,
-			},
+			Addr:      addr,
 		}
 
 		func() {

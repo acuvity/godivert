@@ -5,78 +5,192 @@ import (
 	"fmt"
 )
 
-// Represents a WinDivertAddress struct
 // See : https://reqrypt.org/windivert-doc.html#divert_address
+// Offsets in the raw buffer (WinDivert 2.2):
+//
+//	0..7   : Timestamp (int64)
+//	8..15  : Bitfield word (uint64): Layer/Event + flags
+//	16..   : Union; for NETWORK layer, union starts with IfIdx/SubIfIdx (uint32/uint32)
+const (
+	addrOffTimestamp = 0
+	addrOffBits      = 8
+	addrOffUnion     = 16
+
+	addrOffIfIdx    = addrOffUnion + 0
+	addrOffSubIfIdx = addrOffUnion + 4
+
+	windivertAddressSize = 80
+)
+
 type WinDivertAddress struct {
-	Timestamp int64
-	IfIdx     uint32
-	SubIfIdx  uint32
-	Flags     uint8
-	Reserved1 uint8
-	Reserved2 uint16
-	Reserved3 uint32
+	raw [windivertAddressSize]byte
 }
 
-// NewWinDivertAddress creates a new WinDivertAddress with default values
+// NewWinDivertAddress creates a new WinDivertAddress with default values.
 func NewWinDivertAddress() *WinDivertAddress {
-	return &WinDivertAddress{
-		Timestamp: 0,
-		IfIdx:     0,
-		SubIfIdx:  0,
-		Flags:     0,
-		Reserved1: 0,
-		Reserved2: 0,
-		Reserved3: 0,
+	return &WinDivertAddress{}
+}
+
+// Raw returns pointer to the underlying buffer (use when calling into WinDivert DLL).
+func (w *WinDivertAddress) Raw() *[windivertAddressSize]byte {
+	return &w.raw
+}
+
+// Size returns the binary size of WinDivertAddress.
+func (w *WinDivertAddress) Size() int {
+	return windivertAddressSize
+}
+
+func (w *WinDivertAddress) bits() uint64 {
+	return binary.LittleEndian.Uint64(w.raw[addrOffBits : addrOffBits+8])
+}
+
+func (w *WinDivertAddress) setBits(v uint64) {
+	binary.LittleEndian.PutUint64(w.raw[addrOffBits:addrOffBits+8], v)
+}
+
+func (w *WinDivertAddress) flag(bit uint) bool {
+	return ((w.bits() >> bit) & 1) != 0
+}
+
+func (w *WinDivertAddress) setFlag(bit uint, on bool) {
+	b := w.bits()
+	if on {
+		b |= (uint64(1) << bit)
+	} else {
+		b &^= (uint64(1) << bit)
 	}
+	w.setBits(b)
+}
+
+// Bit positions in the WinDivert 2.2 bitfield word (offset 8).
+const (
+	bitSniffed     = 16
+	bitOutbound    = 17
+	bitLoopback    = 18
+	bitImpostor    = 19
+	bitIPv6        = 20
+	bitIPChecksum  = 21
+	bitTCPChecksum = 22
+	bitUDPChecksum = 23
+)
+
+// Timestamp (read/write)
+func (w *WinDivertAddress) Timestamp() int64 {
+	return int64(binary.LittleEndian.Uint64(w.raw[addrOffTimestamp : addrOffTimestamp+8]))
+}
+
+func (w *WinDivertAddress) SetTimestamp(ts int64) {
+	binary.LittleEndian.PutUint64(w.raw[addrOffTimestamp:addrOffTimestamp+8], uint64(ts))
+}
+
+// IfIdx/SubIfIdx (NETWORK union fields)
+func (w *WinDivertAddress) IfIdx() uint32 {
+	return binary.LittleEndian.Uint32(w.raw[addrOffIfIdx : addrOffIfIdx+4])
+}
+
+func (w *WinDivertAddress) SetIfIdx(v uint32) {
+	binary.LittleEndian.PutUint32(w.raw[addrOffIfIdx:addrOffIfIdx+4], v)
+}
+
+func (w *WinDivertAddress) SubIfIdx() uint32 {
+	return binary.LittleEndian.Uint32(w.raw[addrOffSubIfIdx : addrOffSubIfIdx+4])
+}
+
+func (w *WinDivertAddress) SetSubIfIdx(v uint32) {
+	binary.LittleEndian.PutUint32(w.raw[addrOffSubIfIdx:addrOffSubIfIdx+4], v)
 }
 
 // Add helper methods to handle flags through Flags field
 func (w *WinDivertAddress) SetFlags(flags uint8) {
-	w.Flags = (w.Flags & 0xF0) | (flags & 0x0F)
+	w.SetOutbound(flags&0x1 == 1)
+	w.setFlag(bitLoopback, (flags>>1)&0x1 == 1)
+	w.setFlag(bitImpostor, (flags>>2)&0x1 == 1)
+	w.setFlag(bitIPChecksum, (flags>>3)&0x1 == 1)
+	w.setFlag(bitTCPChecksum, (flags>>4)&0x1 == 1)
+	w.setFlag(bitUDPChecksum, (flags>>5)&0x1 == 1)
 }
 
 func (w *WinDivertAddress) GetFlags() uint8 {
-	return w.Flags & 0x0F
+	var flags uint8
+
+	if w.Outbound() {
+		flags |= 1 << 0
+	}
+
+	if w.Loopback() {
+		flags |= 1 << 1
+	}
+
+	if w.Impostor() {
+		flags |= 1 << 2
+	}
+
+	if w.PseudoIPChecksum() {
+		flags |= 1 << 3
+	}
+
+	if w.PseudoTCPChecksum() {
+		flags |= 1 << 4
+	}
+
+	if w.PseudoUDPChecksum() {
+		flags |= 1 << 5
+	}
+
+	return flags & 0x0F
 }
 
 func (w *WinDivertAddress) SetLayer(layer uint8) {
-	w.Flags = (w.Flags & 0x0F) | (layer << 4)
+	// Layer is bits 0..7 of the bitfield word
+	b := w.bits()
+	b &^= 0xFF
+	b |= uint64(layer)
+	w.setBits(b)
 }
 
 func (w *WinDivertAddress) GetLayer() uint8 {
-	return w.Flags >> 4
+	return uint8(w.bits() & 0xFF)
 }
 
 // Returns the direction of the packet
 // WinDivertDirectionInbound (true) for inbounds packets
 // WinDivertDirectionOutbounds (false) for outbounds packets
 func (w *WinDivertAddress) Direction() Direction {
-	return Direction(w.Flags&0x1 == 1)
+	return Direction(!w.Outbound())
+}
+
+func (w *WinDivertAddress) Outbound() bool {
+	return w.flag(bitOutbound)
+}
+
+func (w *WinDivertAddress) SetOutbound(v bool) {
+	w.setFlag(bitOutbound, v)
 }
 
 // Returns true if the packet is a loopback packet
 func (w *WinDivertAddress) Loopback() bool {
-	return (w.Flags>>1)&0x1 == 1
+	return w.flag(bitLoopback)
 }
 
 // Returns true if the packet is an impostor
 func (w *WinDivertAddress) Impostor() bool {
-	return (w.Flags>>2)&0x1 == 1
+	return w.flag(bitImpostor)
 }
 
 // Returns true if the packet uses a pseudo IP checksum
 func (w *WinDivertAddress) PseudoIPChecksum() bool {
-	return (w.Flags>>3)&0x1 == 1
+	return w.flag(bitIPChecksum)
 }
 
 // Returns true if the packet uses a pseudo TCP checksum
 func (w *WinDivertAddress) PseudoTCPChecksum() bool {
-	return (w.Flags>>4)&0x1 == 1
+	return w.flag(bitTCPChecksum)
 }
 
 // Returns true if the packet uses a pseudo UDP checksum
 func (w *WinDivertAddress) PseudoUDPChecksum() bool {
-	return (w.Flags>>5)&0x1 == 1
+	return w.flag(bitUDPChecksum)
 }
 
 func (w *WinDivertAddress) String() string {
@@ -88,47 +202,14 @@ func (w *WinDivertAddress) String() string {
 		"\t\tImpostor=%t\n"+
 		"\t\tPseudoChecksum={IP=%t TCP=%t UDP=%t}\n"+
 		"\t}",
-		w.Timestamp, w.IfIdx, w.SubIfIdx, w.Direction(), w.Loopback(), w.Impostor(),
+		w.Timestamp(), w.IfIdx(), w.SubIfIdx(), w.Direction(), w.Loopback(), w.Impostor(),
 		w.PseudoIPChecksum(), w.PseudoTCPChecksum(), w.PseudoUDPChecksum())
-}
-
-// Size returns the binary size of WinDivertAddress
-func (w *WinDivertAddress) Size() int {
-	return 24 // 8 + 4 + 4 + 1 + 1 + 2 + 4 bytes
 }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface
 func (w *WinDivertAddress) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, w.Size())
-	offset := 0
-
-	// Write Timestamp (int64 - 8 bytes)
-	binary.LittleEndian.PutUint64(buf[offset:], uint64(w.Timestamp))
-	offset += 8
-
-	// Write IfIdx (uint32 - 4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:], w.IfIdx)
-	offset += 4
-
-	// Write SubIfIdx (uint32 - 4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:], w.SubIfIdx)
-	offset += 4
-
-	// Write Flags (uint8 - 1 byte)
-	buf[offset] = w.Flags
-	offset++
-
-	// Write Reserved1 (uint8 - 1 byte)
-	buf[offset] = w.Reserved1
-	offset++
-
-	// Write Reserved2 (uint16 - 2 bytes)
-	binary.LittleEndian.PutUint16(buf[offset:], w.Reserved2)
-	offset += 2
-
-	// Write Reserved3 (uint32 - 4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:], w.Reserved3)
-
+	copy(buf, w.raw[:])
 	return buf, nil
 }
 
@@ -137,35 +218,6 @@ func (w *WinDivertAddress) UnmarshalBinary(data []byte) error {
 	if len(data) < w.Size() {
 		return fmt.Errorf("data too short for WinDivertAddress: got %d bytes, want %d", len(data), w.Size())
 	}
-
-	offset := 0
-
-	// Read Timestamp
-	w.Timestamp = int64(binary.LittleEndian.Uint64(data[offset:]))
-	offset += 8
-
-	// Read IfIdx
-	w.IfIdx = binary.LittleEndian.Uint32(data[offset:])
-	offset += 4
-
-	// Read SubIfIdx
-	w.SubIfIdx = binary.LittleEndian.Uint32(data[offset:])
-	offset += 4
-
-	// Read Flags
-	w.Flags = data[offset]
-	offset++
-
-	// Read Reserved1
-	w.Reserved1 = data[offset]
-	offset++
-
-	// Read Reserved2
-	w.Reserved2 = binary.LittleEndian.Uint16(data[offset:])
-	offset += 2
-
-	// Read Reserved3
-	w.Reserved3 = binary.LittleEndian.Uint32(data[offset:])
-
+	copy(w.raw[:], data[:w.Size()])
 	return nil
 }

@@ -1,3 +1,5 @@
+//go:build windows
+
 package godivert
 
 import (
@@ -465,13 +467,7 @@ func (p *Packet) Reset() {
 
 	// Reset address if it exists
 	if p.Addr != nil {
-		p.Addr.Timestamp = 0
-		p.Addr.IfIdx = 0
-		p.Addr.SubIfIdx = 0
-		p.Addr.Flags = 0
-		p.Addr.Reserved1 = 0
-		p.Addr.Reserved2 = 0
-		p.Addr.Reserved3 = 0
+		*p.Addr.Raw() = [windivertAddressSize]byte{}
 	}
 }
 

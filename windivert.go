@@ -1,3 +1,5 @@
+//go:build windows
+
 package godivert
 
 import (
@@ -438,7 +440,7 @@ func (wd *WinDivertHandle) Recv() (*Packet, error) {
 		uintptr(unsafe.Pointer(&packetBuffer[0])),
 		uintptr(defaultBufferSize),
 		uintptr(unsafe.Pointer(&packetLen)),
-		uintptr(unsafe.Pointer(&addr)),
+		uintptr(unsafe.Pointer(addr.Raw())),
 	)
 
 	if success == 0 {
@@ -497,7 +499,8 @@ func (wd *WinDivertHandle) Send(packet *Packet) (uint, error) {
 		uintptr(unsafe.Pointer(&packet.Raw[0])),
 		uintptr(packet.PacketLen),
 		uintptr(unsafe.Pointer(&sendLen)),
-		uintptr(unsafe.Pointer(packet.Addr)))
+		uintptr(unsafe.Pointer(packet.Addr.Raw())),
+	)
 
 	if success == 0 {
 		return 0, fmt.Errorf("WinDivertSend failed: %v", err)
@@ -515,7 +518,7 @@ func (wd *WinDivertHandle) HelperCalcChecksum(packet *Packet) error {
 	success, _, err := winDivertHelperCalcChecksums.Call(
 		uintptr(unsafe.Pointer(&packet.Raw[0])),
 		uintptr(packet.PacketLen),
-		uintptr(unsafe.Pointer(packet.Addr)),
+		uintptr(unsafe.Pointer(packet.Addr.Raw())),
 		uintptr(0))
 
 	if success == 0 {
@@ -564,7 +567,8 @@ func HelperEvalFilter(packet *Packet, filter string) (bool, error) {
 		uintptr(0),
 		uintptr(unsafe.Pointer(&packet.Raw[0])),
 		uintptr(packet.PacketLen),
-		uintptr(unsafe.Pointer(&packet.Addr)))
+		uintptr(unsafe.Pointer(packet.Addr.Raw())),
+	)
 
 	if success == 0 {
 		return false, err
@@ -635,7 +639,7 @@ func (wd *WinDivertHandle) RecvEx(packet []byte, addr *WinDivertAddress, flags u
 		uintptr(len(packet)),
 		uintptr(unsafe.Pointer(&recvLen)),
 		uintptr(flags),
-		uintptr(unsafe.Pointer(addr)),
+		uintptr(unsafe.Pointer(addr.Raw())),
 		uintptr(unsafe.Pointer(&overlapped)),
 	)
 
@@ -666,7 +670,7 @@ func (wd *WinDivertHandle) SendEx(packet []byte, addr *WinDivertAddress, flags u
 		uintptr(len(packet)),
 		uintptr(unsafe.Pointer(&sendLen)),
 		uintptr(flags),
-		uintptr(unsafe.Pointer(addr)),
+		uintptr(unsafe.Pointer(addr.Raw())),
 		uintptr(unsafe.Pointer(overlapped)),
 	)
 
@@ -997,9 +1001,9 @@ func (wd *WinDivertHandle) RecvBatch(maxPackets int) ([]*Packet, error) {
 		uintptr(len(packetBuffer)),                // packetLen
 		uintptr(unsafe.Pointer(&recvLen)),         // pRecvLen
 		0,                                         // flags (must be 0)
-		uintptr(unsafe.Pointer(&addresses[0])),    // pAddr
-		uintptr(unsafe.Pointer(&addrLen)),         // pAddrLen
-		0)                                         // lpOverlapped
+		uintptr(unsafe.Pointer(addresses[0].Raw())), // pAddr
+		uintptr(unsafe.Pointer(&addrLen)),           // pAddrLen
+		0)                                           // lpOverlapped
 
 	if success == 0 {
 		if err == windows.ERROR_INSUFFICIENT_BUFFER {

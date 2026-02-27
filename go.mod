@@ -1,5 +1,5 @@
 module github.com/deblasis/godivert
 
-go 1.19
+go 1.25
 
-require golang.org/x/sys v0.27.0
+require golang.org/x/sys v0.41.0
